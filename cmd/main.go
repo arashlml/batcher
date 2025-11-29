@@ -2,6 +2,7 @@ package main
 
 import (
 	"batcher/batcher"
+	"batcher/entity"
 	"batcher/handler"
 	"batcher/http"
 	"batcher/repository"
@@ -22,9 +23,9 @@ func main() {
 	defer db.Close()
 	repo := repository.NewRepository(db)
 
-	batcher := batcher.NewBatcher(10, 10*time.Second, repo)
+	cargo := batcher.NewBatcher[entity.Request](10, 10*time.Second, repo.BatchInsert)
 
-	h := handler.NewHandler(batcher)
+	h := handler.NewHandler(cargo)
 
 	http.RegisterAPI(e, h)
 

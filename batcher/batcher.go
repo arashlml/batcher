@@ -1,90 +1,84 @@
 package batcher
 
 import (
-	"batcher/entity"
 	"context"
 	"errors"
 	"log"
+	"sync/atomic"
 	"time"
 )
 
-type Repository interface {
-	BatchInsert(ctx context.Context, items []entity.Request) error
-}
-
-type Batcher struct {
-	itemsCh  chan entity.Request
-	batch    []entity.Request
+type Batcher[T any] struct {
+	itemsCh  chan T
+	batch    []T
 	maxSize  int
-	repo     Repository
+	Function func(context.Context, []T) error
 	interval time.Duration
 	quit     chan struct{}
 }
 
-func NewBatcher(maxSize int, interval time.Duration, repo Repository) *Batcher {
-	log.Println("Making the batcher")
-	b := &Batcher{
-		itemsCh:  make(chan entity.Request, maxSize*4),
-		batch:    make([]entity.Request, 0, maxSize),
+func NewBatcher[T any](maxSize int, interval time.Duration, function func(context.Context, []T) error) *Batcher[T] {
+	log.Println("BATCHER: MAKING THE BATCHER")
+	b := &Batcher[T]{
+		itemsCh:  make(chan T, 1000),
+		batch:    make([]T, 0, maxSize),
 		maxSize:  maxSize,
 		interval: interval,
 		quit:     make(chan struct{}),
-		repo:     repo,
+		Function: function,
 	}
-
 	go b.run()
-
 	return b
 }
 
-func (b *Batcher) Add(item entity.Request) error {
+var addCounter int64
+
+func (b *Batcher[T]) Add(item T) error {
 	select {
 	case b.itemsCh <- item:
+		atomic.AddInt64(&addCounter, 1)
+		log.Printf("BATCHER: BATCHER ADD = %d\n", atomic.LoadInt64(&addCounter))
 		return nil
 	default:
-		return errors.New("buffer is full")
+		return errors.New("BATCHER: BUFFER IS FULL")
 	}
 }
 
-func (b *Batcher) run() {
+func (b *Batcher[T]) run() {
 	ticker := time.NewTicker(b.interval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case item := <-b.itemsCh:
 			b.batch = append(b.batch, item)
 			if len(b.batch) >= b.maxSize {
-				log.Println("batch is full. let's flush")
+				log.Println("BATCHER: BATCH IS FULL, I HAVE TO FLUSH! 🚽")
 				b.flush()
 			}
 		case <-ticker.C:
-			if len(b.batch) == 0 {
-				continue
-			}
-			log.Println("Flushing time has come")
+			log.Println("BATCHER: FLUSHING TIME HAS COME 🚽")
 			b.flush()
 		case <-b.quit:
-			log.Println("quitting")
+			log.Println("BATCHER: QUITING THE BATCHER")
 			b.flush()
 			return
 		}
 	}
 }
-func (b *Batcher) flush() {
-	if len(b.batch) == 0 {
-		log.Println("Nothing to flush")
-		return
-	}
 
+var flushCounter int64
+
+func (b *Batcher[T]) flush() {
 	batchToInsert := b.batch
-	b.batch = make([]entity.Request, 0, b.maxSize)
-	log.Println("i've flushed the batch")
-	if err := b.repo.BatchInsert(context.Background(), batchToInsert); err != nil {
-		log.Printf("error inserting the batch --> %v ", err)
+	b.batch = make([]T, 0, b.maxSize)
+	if err := b.Function(context.Background(), batchToInsert); err != nil {
+		log.Printf("BATCHER: ERROR SENDING THE BATCH --> %v ", err)
+	} else {
+		atomic.AddInt64(&flushCounter, 1)
+		log.Printf("BATCHER: FLUSH CALLED : %d \n", atomic.LoadInt64(&flushCounter))
 	}
 }
 
-func (b *Batcher) Close() {
+func (b *Batcher[T]) Close() {
 	close(b.quit)
 }
