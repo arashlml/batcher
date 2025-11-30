@@ -1,4 +1,4 @@
-package batcherv2
+package batcherV
 
 import (
 	"context"
@@ -9,37 +9,38 @@ import (
 )
 
 type Batcher[T any] struct {
-	itemsCh    chan T
-	batch      []T
-	maxSize    int
-	function   func(context.Context, []T) error
-	interval   time.Duration
-	quit       chan struct{}
-	cancelTime time.Duration
+	itemsCh      chan T
+	batch        []T
+	maxSize      int
+	Function     func(context.Context, []T) error
+	interval     time.Duration
+	quit         chan struct{}
+	CancelTime   time.Duration
+	addCounter   int64
+	flushCounter int64
 }
 
 func NewBatcher[T any](maxSize int, interval time.Duration, function func(context.Context, []T) error, cancelTime time.Duration) *Batcher[T] {
-	log.Println("BATCHER: MAKING THE BATCHER")
+
 	b := &Batcher[T]{
-		itemsCh:    make(chan T, 0),
+		itemsCh:    make(chan T, 2*maxSize),
 		batch:      make([]T, 0, maxSize),
 		maxSize:    maxSize,
 		interval:   interval,
 		quit:       make(chan struct{}),
-		function:   function,
-		cancelTime: cancelTime,
+		Function:   function,
+		CancelTime: cancelTime,
 	}
+	log.Println("BATCHER: WELCOME! YOUR USING THE CHANNEL BASED BATCHER!")
 	go b.run()
 	return b
 }
 
-var addCounter int64
-
 func (b *Batcher[T]) Add(item T) error {
 	select {
 	case b.itemsCh <- item:
-		atomic.AddInt64(&addCounter, 1)
-		log.Printf("BATCHER: BATCHER ADD = %d\n", atomic.LoadInt64(&addCounter))
+		atomic.AddInt64(&b.addCounter, 1)
+		log.Printf("BATCHER: BATCHER ADD = %d\n", atomic.LoadInt64(&b.addCounter))
 		return nil
 	default:
 		return errors.New("BATCHER: BUFFER IS FULL")
@@ -47,7 +48,6 @@ func (b *Batcher[T]) Add(item T) error {
 }
 
 func (b *Batcher[T]) run() {
-	//ticker := time.NewTicker(b.interval)
 	var ticker *time.Ticker
 	var tickerCh <-chan time.Time
 	for {
@@ -55,7 +55,7 @@ func (b *Batcher[T]) run() {
 		case item := <-b.itemsCh:
 			b.batch = append(b.batch, item)
 			if len(b.batch) == 1 {
-				log.Println("BATCHER: TICK TOCK  ( ﾉ ﾟｰﾟ)ﾉ")
+				log.Println("BATCHER: TICK TOCK TICKER STARTED  ( ﾉ ﾟｰﾟ)ﾉ")
 				ticker = time.NewTicker(b.interval)
 				tickerCh = ticker.C
 			}
@@ -83,8 +83,6 @@ func (b *Batcher[T]) run() {
 	}
 }
 
-var flushCounter int64
-
 func (b *Batcher[T]) flush() {
 	batchToInsert := b.batch
 	b.batch = make([]T, 0, b.maxSize)
@@ -93,8 +91,8 @@ func (b *Batcher[T]) flush() {
 	if err := b.Function(ctx, batchToInsert); err != nil {
 		log.Printf("BATCHER: ERROR SENDING THE BATCH --> %v ", err)
 	} else {
-		atomic.AddInt64(&flushCounter, 1)
-		log.Printf("BATCHER: FLUSH CALLED : %d \n", atomic.LoadInt64(&flushCounter))
+		atomic.AddInt64(&b.flushCounter, 1)
+		log.Printf("BATCHER: FLUSH CALLED : %d \n", atomic.LoadInt64(&b.flushCounter))
 	}
 }
 

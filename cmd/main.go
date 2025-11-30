@@ -1,7 +1,7 @@
 package main
 
 import (
-	"batcher/batcher"
+	batcherV3 "batcher/batcher3"
 	"batcher/entity"
 	"batcher/handler"
 	"batcher/http"
@@ -14,8 +14,8 @@ import (
 
 func main() {
 	e := echo.New()
-	connstr := "postgres://postgres:postgres@localhost:5432/mydb?sslmode=disable"
-	db, err := repository.NewDatabase(connstr)
+	connStr := "postgres://postgres:postgres@localhost:5432/mydb?sslmode=disable"
+	db, err := repository.NewDatabase(connStr)
 	if err != nil {
 		log.Printf("error making the db --> %v", err)
 		return
@@ -23,9 +23,9 @@ func main() {
 	defer db.Close()
 	repo := repository.NewRepository(db)
 
-	cargo := batcher.NewBatcher[entity.Request](10, 10*time.Second, repo.BatchInsert)
+	cargo := batcherV3.NewBatcher[entity.Request](10, 10*time.Second)
 
-	h := handler.NewHandler(cargo)
+	h := handler.NewHandler(cargo, repo)
 
 	http.RegisterAPI(e, h)
 
